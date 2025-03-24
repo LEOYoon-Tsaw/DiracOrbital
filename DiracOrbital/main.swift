@@ -8,55 +8,13 @@
 import Foundation
 import Numerics
 
-extension Formatter {
-    static let scientific: NumberFormatter = {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .scientific
-        formatter.positiveFormat = "0.###E+0"
-        formatter.exponentSymbol = "e"
-        return formatter
-    }()
-}
-
-private func phaseInPi(_ z: Complex<Double>) -> Double {
-    if z.isZero {
-        return 0.0
-    }
-    var phase = z.phase / Double.pi
-    if phase < 0 {
-        phase += 2.0
-    }
-    return phase
-}
-
-struct BiSpinor: CustomStringConvertible {
-    let posiUp: Complex<Double>
-    let posiDown: Complex<Double>
-    let negaUp: Complex<Double>
-    let negaDown: Complex<Double>
-    
-    var description: String {
-        var desp = "ψ1: \(String(format: "%.3e", posiUp.length))∠\(String(format: "%.2f", phaseInPi(posiUp)))π\n"
-        desp += "ψ2: \(String(format: "%.3e", posiDown.length))∠\(String(format: "%.2f", phaseInPi(posiDown)))π\n"
-        desp += "ψ3: \(String(format: "%.3e", negaUp.length))∠\(String(format: "%.2f", phaseInPi(negaUp)))π\n"
-        desp += "ψ4: \(String(format: "%.3e", negaDown.length))∠\(String(format: "%.2f", phaseInPi(negaDown)))π"
-        return desp
-    }
-    
-    var density: Double {
-        return (posiUp.conjugate * posiUp).real + (posiDown.conjugate * posiDown).real + (negaUp.conjugate * negaUp).real + (negaDown.conjugate * negaDown).real
-    }
-}
-
 private struct IntermediateResults {
     var zalpha: Double?
     var gamma: Double?
     var lambda: Double?
     var gfLambda: Double?
     var relativeEnergy: Double?
-    var energy: Complex<Double>?
     var normalization: Double?
-    var spinorCoef: [String: (Double, Int, Int)] = [:]
 }
 
 private func sgn(_ x: Int) -> Double {
@@ -83,88 +41,83 @@ private func factorial(_ n: Int) -> Double {
     }
 }
 
-//starting from left to right, (a_0 * x^0 + a_1 * x^1 + ...)
-// (For n = 0: 1, for n = 1: α+1−x, and for n > 1 the recurrence is used.)
-private func generalizedLaguerre(n: Int, a: Double, x: Double) -> Double {
-    if n < 0 {
-        return 0
-    } else if n == 0 {
-        return 1
-    } else if n == 1 {
-        return a + 1 - x
-    } else {
-        return ((Double(2 * n - 1) + a - x) * generalizedLaguerre(n: n-1, a: a, x: x) - (Double(n - 1) + a) * generalizedLaguerre(n: n-2, a: a, x: x)) / Double(n)
-    }
-}
-
-// starting from left to right, (a_0 * x^0 + a_1 * x^1 + ...) * sqrt(1 - x^2)^m
+// --- Associated Legendre Polynomials ---
 // Uses recurrence relations:
 // P_m^m(x) = (-1)^m (2m-1)!! (1-x^2)^(m/2)
 // P_{m+1}^m(x) = x (2m+1) P_m^m(x)
 // P_l^m(x) = ((2l-1)x P_{l-1}^m(x) - (l+m-1) P_{l-2}^m(x))/(l-m)  for l > m
-private func associatedLegendre(l: Int, m: Int, cosTheta: Double, sinTheta: Double) -> Double {
-    guard l >= 0 else {
-        return associatedLegendre(l: -l-1, m: m, cosTheta: cosTheta, sinTheta: sinTheta)
+private func associatedLegendre(l: Int, m: Int, x: Double) -> Double {
+    let absM = abs(m)
+    let sign = absM % 2 == 0 ? 1.0 : -1.0
+    if l < absM {
+        return 0.0
     }
-    guard abs(m) <= l else {
-        return 0
-    }
-    
-    let sign = m.isMultiple(of: 2) ? 1.0 : -1.0
-    guard m >= 0 else {
-        return sign * factorial(l + m) / factorial(l - m) * associatedLegendre(l: l, m: -m, cosTheta: cosTheta, sinTheta: sinTheta)
+    if m < 0 {
+        return sign * factorial(l - absM) / factorial(l + absM) * associatedLegendre(l: l, m: absM, x: x)
     }
     
-    let ppm = sign * doubleFactorial(2 * m - 1) * Double.pow(sinTheta, Double(m))
-    if l == m {
-        return ppm
-    } else if l == m + 1 {
-        return ppm * Double(2 * m + 1) * cosTheta
+    // Base: P_absM^absM(x)
+    var p_mm = 1.0
+    if absM > 0 {
+        let factor = 1.0 - x * x
+        p_mm = sign * doubleFactorial(2 * absM - 1) * pow(factor, Double(absM) / 2)
+    }
+    
+    if l == absM {
+        return p_mm
+    }
+    
+    // Next: P_{absM+1}^absM(x)
+    let p_mmp1 = x * Double(2 * absM + 1) * p_mm
+    if l == absM + 1 {
+        return p_mmp1
+    }
+    
+    // Recurrence for l > absM+1
+    return ((Double(2 * l - 1) * x * associatedLegendre(l: l-1, m: absM, x: x)) - (Double(l + absM - 1) * associatedLegendre(l: l-2, m: absM, x: x))) / Double(l - absM)
+}
+
+// --- Spherical Harmonic Function ---
+// Computes Y_l^m(theta, phi) = norm * P_l^m(cos(theta)) * exp(i * m * phi)
+private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double) -> Complex<Double> {
+    if l < 0 {
+        return sphericalHarmonic(l: -l - 1, m: m, theta: theta, phi: phi)
+    }
+    let absM = abs(m)
+    if l > 0 && absM > l {
+        return .zero
+    }
+    // Normalization factor: sqrt((2l+1)/(4π) * ((l-|m|)!/(l+|m|)!))
+    let normFactor = sqrt((Double(2 * l + 1) / (4 * Double.pi)) *
+                          factorial(l - absM) / factorial(l + absM))
+    
+    // Associated Legendre polynomial evaluated at cos(theta)
+    let legendreValue = associatedLegendre(l: l, m: m, x: cos(theta))
+    
+    // e^(i m phi)
+    let expFactor = Complex.exp(Complex(imaginary: Double(m) * phi))
+    
+    // Combine all parts: norm * P_l^m(cos(theta)) * exp(i m phi)
+    return Complex<Double>(normFactor) * Complex(legendreValue, 0) * expFactor
+}
+
+// --- Generalized Laguerre Polynomial ---
+// Implements Lₙ^(α)(x) via a recurrence relation.
+// (For n = 0: 1, for n = 1: α+1−x, and for n > 1 the recurrence is used.)
+private func generalizedLaguerre(n: Int, alpha: Double, x: Double) -> Double {
+    if n < 0 {
+        return 0.0
+    } else if n == 0 {
+        return 1.0
+    } else if n == 1 {
+        return alpha + 1.0 - x
     } else {
-        return (cosTheta * Double(2 * l - 1) * associatedLegendre(l: l-1, m: m, cosTheta: cosTheta, sinTheta: sinTheta) - Double(l + m - 1) * associatedLegendre(l: l-2, m: m, cosTheta: cosTheta, sinTheta: sinTheta)) / Double(l - m)
+       return ((Double(2 * n - 1) + alpha - x) * generalizedLaguerre(n: n-1, alpha: alpha, x: x) - (Double(n - 1) + alpha) * generalizedLaguerre(n: n-2, alpha: alpha, x: x)) / Double(n)
     }
 }
 
-private func sphericalHarmonicNormalization(l: Int, m: Int) -> Double {
-    if l >= 0 {
-        return sqrt(Double(2 * l + 1) / (4 * Double.pi) * factorial(l - m) / factorial(l + m))
-    } else {
-        return sqrt(Double(-2 * l - 1) / (4 * Double.pi) * factorial(-l - 1 - m) / factorial(-l - 1 + m))
-    }
-}
-
-private func spinorCoef(a: Int, b: Int, downSpinor: Bool, positive: Bool) -> (Double, Int, Int) {
-    let m: Int
-    let ym: Int
-    let k: Int
-    let sign: Double
-    switch (positive, downSpinor) {
-    case (true, false):
-        m = -b
-        ym = (b-1) / 2
-        k = a
-        sign = 1.0
-    case (true, true):
-        m = b
-        ym = (b+1) / 2
-        k = a
-        sign = sgn(a)
-    case (false, false):
-        m = -b
-        ym = (b-1) / 2
-        k = -a
-        sign = 1.0
-    case (false, true):
-        m = b
-        ym = (b+1) / 2
-        k = -a
-        sign = sgn(a)
-    }
-    
-    var coef = sphericalHarmonicNormalization(l: k, m: ym)
-    coef *= sqrt((0.5 * Double(m + 1) + Double(k)) / Double(2 * k + 1))
-    coef *= sign
-    return (coef, k, ym)
+private func spinorCoef(a: Int, b: Int) -> Double {
+    return sqrt((0.5 * Double(b + 1) + Double(a)) / Double(2 * a + 1))
 }
 
 class HydrogenOrbital {
@@ -233,16 +186,6 @@ class HydrogenOrbital {
         }
     }
     
-    private var energy: Complex<Double> {
-        if let energy = intermediateResults.energy {
-            return energy
-        } else {
-            let energy = Complex(imaginary: -Self.mechbar * Self.c * relativeEnergy)
-            intermediateResults.energy = energy
-            return energy
-        }
-    }
-    
     private var lambda: Double {
         if let lambda = intermediateResults.lambda {
             return lambda
@@ -276,7 +219,7 @@ class HydrogenOrbital {
             } else {
                 normalization = lambda * 0.5 * pow(zalpha / gamma, 2.0) / Double(kappa * kappa) / Double.gamma(1 + 2 * gamma)
             }
-            normalization = 2 * lambda * sqrt(normalization / commonFactor)
+            normalization = sqrt(normalization / commonFactor)
             intermediateResults.normalization = normalization
             return normalization
         }
@@ -285,27 +228,14 @@ class HydrogenOrbital {
     // --- Radial functions ---
     // The radial part is split into two functions g(ρ) and f(ρ) as in the note.
     private func radial(rho: Double) -> (Double, Double) {
-        let commonFactor = Double.pow(rho, gamma - 1) * exp(-rho / 2)
-        let firstTerm = rho * generalizedLaguerre(n: nk - 1, a: 2 * gamma + 1, x: rho)
-        let lastTerm = self.gfLambda * generalizedLaguerre(n: nk, a: 2 * gamma - 1, x: rho)
+        let commonFactor = Double.pow(rho, gamma) * exp(-rho / 2)
+        let firstTerm = rho * generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma + 1, x: rho)
+        let lastTerm = self.gfLambda * generalizedLaguerre(n: self.nk, alpha: 2 * self.gamma - 1, x: rho)
         let gammaKappa = self.gamma - Double(self.kappa)
         let gFunc = commonFactor * (zalpha * firstTerm + gammaKappa * lastTerm)
         let fFunc = commonFactor * (zalpha * lastTerm + gammaKappa * firstTerm)
+        
         return (gFunc, fFunc)
-    }
-    
-    private func sphericalHarmonics(downSpinor: Bool, positive: Bool, thetaPhase: Complex<Double>, phi: Double) -> Complex<Double> {
-        let normalization: Double
-        let k: Int
-        let m: Int
-        if let spinorCoefs = intermediateResults.spinorCoef["\(positive)_\(downSpinor)"] {
-            (normalization, k, m) = spinorCoefs
-        } else {
-            (normalization, k, m) = spinorCoef(a: kappa, b: mx2, downSpinor: downSpinor, positive: positive)
-            intermediateResults.spinorCoef["\(positive)_\(downSpinor)"] = (normalization, k, m)
-        }
-        let polynomial = associatedLegendre(l: k, m: m, cosTheta: thetaPhase.real, sinTheta: thetaPhase.imaginary)
-        return Complex(normalization * polynomial) * Complex.exp(Complex(imaginary: phi * Double(m)))
     }
     
     private func spherical(theta: Double, phi: Double) -> (Complex<Double>, Complex<Double>, Complex<Double>, Complex<Double>) {
@@ -315,24 +245,24 @@ class HydrogenOrbital {
         //  • Component 2: Ω(θ,ϕ)_κ^(m + ½)
         //  • Component 3: Ω(θ,ϕ)_₋κ^(m – ½)
         //  • Component 4: Ω(θ,ϕ)_₋κ^(m + ½)
-        let thetaPhase = Complex(cos(theta), sin(theta))
-        let Y1 = sphericalHarmonics(downSpinor: false, positive: true, thetaPhase: thetaPhase, phi: phi)
-        let Y2 = sphericalHarmonics(downSpinor: true, positive: true, thetaPhase: thetaPhase, phi: phi)
-        let Y3 = sphericalHarmonics(downSpinor: false, positive: false, thetaPhase: thetaPhase, phi: phi)
-        let Y4 = sphericalHarmonics(downSpinor: true, positive: false, thetaPhase: thetaPhase, phi: phi)
+        let Y1 = Complex(spinorCoef(a: kappa, b: -mx2)) * sphericalHarmonic(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        let Y2 = Complex(sgn(kappa) * spinorCoef(a: kappa, b: mx2)) * sphericalHarmonic(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
+        let Y3 = Complex(spinorCoef(a: -kappa, b: -mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        let Y4 = Complex(sgn(kappa) * spinorCoef(a: -kappa, b: mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
         return (Y1, Y2, Y3, Y4)
     }
     
-    func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> BiSpinor {
+    func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> [Complex<Double>] {
         // Radial parts: g(ρ) and f(ρ)
         let rho = 2 * lambda * r
         let (g, f) = radial(rho: rho)
         
         // Time-dependent phase factor exp(–i ε t/ħ).
-        let globalPhase = Complex<Double>.exp(self.energy * Complex(t))
+        let energy = Self.mechbar * Self.c * relativeEnergy
+        let globalPhase = Complex<Double>.exp(Complex(imaginary: -energy * t))
         
         // Overall multiplicative factor.
-        let commonFactor = globalPhase * Complex(self.normalization)  // (This factor includes normalization, time evolution and r^-1.)
+        let commonFactor = globalPhase * Complex(normalization / r)  // (This factor includes normalization, time evolution and r^-1.)
         
         // Spherical parts: Y_κ^m
         let (YPosUp, YPosDn, YNegUp, YNegDn) = spherical(theta: theta, phi: phi)
@@ -346,10 +276,10 @@ class HydrogenOrbital {
         let negUp = commonFactor * Complex(0, f) * YNegUp
         let negDn = commonFactor * Complex(0, f) * YNegDn
         
-        return BiSpinor(posiUp: posUp, posiDown: posDn, negaUp: negUp, negaDown: negDn)
+        return [posUp, posDn, negUp, negDn]
     }
     
-    func waveFunction(t: Double, x: Double, y: Double, z: Double) -> BiSpinor {
+    func waveFunction(t: Double, x: Double, y: Double, z: Double) -> [Complex<Double>] {
         let rxy = Double.hypot(x, y)
         let r = Double.hypot(rxy, z)
         let theta = Double.atan2(y: rxy, x: z)
@@ -362,7 +292,6 @@ class HydrogenOrbital {
 // (These example parameters are illustrative. In practice, one must choose t, r, θ, ϕ
 //  as well as the quantum numbers appropriately.)
 
-
 let startTime = Date()
 let orbital = HydrogenOrbital(z: 79, n: 4, kappa: -1, mx2: 1)
 
@@ -371,7 +300,10 @@ for x in (-100)...100 {
     for y in (-100)...100 {
         for z in (-100)...100 {
             let wave = orbital.waveFunction(t: 0, x: Double(x) / 100 * HydrogenOrbital.rBohr, y: Double(y) / 100 * HydrogenOrbital.rBohr, z: Double(z) / 100 * HydrogenOrbital.rBohr)
-            let probability = wave.density
+            var probability = 0.0
+            for component in wave {
+                probability += (component.conjugate * component).real
+            }
             if !probability.isNaN {
                 totalProbability += probability * pow(HydrogenOrbital.rBohr / 100, 3)
             }
@@ -381,12 +313,3 @@ for x in (-100)...100 {
 let endTime = Date()
 
 print("Total probability in space is \(totalProbability), calculated in \(endTime.timeIntervalSince(startTime)) seconds.")
-
-/*
-let startTime = Date()
-let orbital = HydrogenOrbital(z: 79, n: 24, kappa: -13, mx2: 21)
-let result = orbital.waveFunction(t: 0, x: 0.4 * HydrogenOrbital.rBohr, y: 0, z: 0)
-let endTime = Date()
-
-print("Wave function is: \n\(result)\nCalculated in \(endTime.timeIntervalSince(startTime)) seconds.")
-*/
