@@ -57,8 +57,8 @@ private struct IntermediateResults {
     var energy: Complex<Double>?
     var normalization: Double?
     var generalizedLCoef: [Int: [Double]] = [:]
-    var LegendrePCoef: [[Int]: [Double]] = [:]
-    var spinorCoef: [[Bool]: (Double, Int, Int)] = [:]
+    var LegendrePCoef: [String: [Double]] = [:]
+    var spinorCoef: [String: (Double, Int, Int)] = [:]
 }
 
 private func sgn(_ x: Int) -> Double {
@@ -343,7 +343,6 @@ class HydrogenOrbital {
         let gammaKappa = self.gamma - Double(self.kappa)
         let gFunc = commonFactor * (zalpha * firstTerm + gammaKappa * lastTerm)
         let fFunc = commonFactor * (zalpha * lastTerm + gammaKappa * firstTerm)
-        
         return (gFunc, fFunc)
     }
     
@@ -351,18 +350,18 @@ class HydrogenOrbital {
         let normalization: Double
         let k: Int
         let m: Int
-        if let spinorCoefs = intermediateResults.spinorCoef[[positive, downSpinor]] {
+        if let spinorCoefs = intermediateResults.spinorCoef["\(positive)_\(downSpinor)"] {
             (normalization, k, m) = spinorCoefs
         } else {
             (normalization, k, m) = spinorCoef(a: kappa, b: mx2, downSpinor: downSpinor, positive: positive)
-            intermediateResults.spinorCoef[[positive, downSpinor]] = (normalization, k, m)
+            intermediateResults.spinorCoef["\(positive)_\(downSpinor)"] = (normalization, k, m)
         }
         let coefs: [Double]
-        if let LegendrePCoef = intermediateResults.LegendrePCoef[[k, m]] {
+        if let LegendrePCoef = intermediateResults.LegendrePCoef["\(k)_\(m)"] {
             coefs = LegendrePCoef
         } else {
             coefs = associatedLegendreCoef(l: k, m: m)
-            intermediateResults.LegendrePCoef[[k, m]] = coefs
+            intermediateResults.LegendrePCoef["\(k)_\(m)"] = coefs
         }
         let doubleM = Double(m)
         var result: Double = 0
@@ -448,8 +447,11 @@ let endTime = Date()
 
 print("Total probability in space is \(totalProbability), calculated in \(endTime.timeIntervalSince(startTime)) seconds.")
 
-
 /*
-let orbital = HydrogenOrbital(z: 79, n: 4, kappa: -1, mx2: 1)
-print(orbital.waveFunction(t: 0, x: 0.4 * HydrogenOrbital.rBohr, y: 0, z: 0))
+let startTime = Date()
+let orbital = HydrogenOrbital(z: 79, n: 24, kappa: -13, mx2: 21)
+let result = orbital.waveFunction(t: 0, x: 0.4 * HydrogenOrbital.rBohr, y: 0, z: 0)
+let endTime = Date()
+
+print("Wave function is: \n\(result)\nCalculated in \(endTime.timeIntervalSince(startTime)) seconds.")
 */
