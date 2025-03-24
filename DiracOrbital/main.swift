@@ -56,8 +56,6 @@ private struct IntermediateResults {
     var relativeEnergy: Double?
     var energy: Complex<Double>?
     var normalization: Double?
-    var generalizedLCoef: [Int: [Double]] = [:]
-    var LegendrePCoef: [String: [Double]] = [:]
     var spinorCoef: [String: (Double, Int, Int)] = [:]
 }
 
@@ -87,33 +85,15 @@ private func factorial(_ n: Int) -> Double {
 
 //starting from left to right, (a_0 * x^0 + a_1 * x^1 + ...)
 // (For n = 0: 1, for n = 1: α+1−x, and for n > 1 the recurrence is used.)
-private func generalizedLaguerreCoef(n: Int, a: Double) -> [Double] {
+private func generalizedLaguerre(n: Int, a: Double, x: Double) -> Double {
     if n < 0 {
-        return []
+        return 0
     } else if n == 0 {
-        return [1]
+        return 1
     } else if n == 1 {
-        return [a + 1, -1]
+        return a + 1 - x
     } else {
-        let coefn_1 = generalizedLaguerreCoef(n: n-1, a: a)
-        let coefn_2 = generalizedLaguerreCoef(n: n-2, a: a)
-        let nDouble = Double(n)
-        var coefn = [Double]()
-        let maxN = max(coefn_1.count, coefn_2.count) + 1
-        for i in 0..<maxN {
-            var coef = 0.0
-            if i < coefn_1.count {
-                coef += (2.0 + (a - 1.0) / nDouble) * coefn_1[i]
-            }
-            if i > 0 && i-1 < coefn_1.count {
-                coef -= 1.0 / nDouble * coefn_1[i-1]
-            }
-            if i < coefn_2.count {
-                coef -= (1.0 + (a - 1) / nDouble) * coefn_2[i]
-            }
-            coefn.append(coef)
-        }
-        return coefn
+        return ((Double(2 * n - 1) + a - x) * generalizedLaguerre(n: n-1, a: a, x: x) - (Double(n - 1) + a) * generalizedLaguerre(n: n-2, a: a, x: x)) / Double(n)
     }
 }
 
@@ -122,41 +102,26 @@ private func generalizedLaguerreCoef(n: Int, a: Double) -> [Double] {
 // P_m^m(x) = (-1)^m (2m-1)!! (1-x^2)^(m/2)
 // P_{m+1}^m(x) = x (2m+1) P_m^m(x)
 // P_l^m(x) = ((2l-1)x P_{l-1}^m(x) - (l+m-1) P_{l-2}^m(x))/(l-m)  for l > m
-private func associatedLegendreCoef(l: Int, m: Int) -> [Double] {
+private func associatedLegendre(l: Int, m: Int, cosTheta: Double, sinTheta: Double) -> Double {
     guard l >= 0 else {
-        return associatedLegendreCoef(l: -l-1, m: m)
+        return associatedLegendre(l: -l-1, m: m, cosTheta: cosTheta, sinTheta: sinTheta)
     }
     guard abs(m) <= l else {
-        return []
+        return 0
     }
     
     let sign = m.isMultiple(of: 2) ? 1.0 : -1.0
     guard m >= 0 else {
-        return associatedLegendreCoef(l: l, m: -m).map {
-            sign * factorial(l + m) / factorial(l - m) * $0
-        }
+        return sign * factorial(l + m) / factorial(l - m) * associatedLegendre(l: l, m: -m, cosTheta: cosTheta, sinTheta: sinTheta)
     }
     
+    let ppm = sign * doubleFactorial(2 * m - 1) * Double.pow(sinTheta, Double(m))
     if l == m {
-        return [sign * doubleFactorial(2 * m - 1)]
+        return ppm
     } else if l == m + 1 {
-        return [0.0, sign * doubleFactorial(2 * m - 1) * Double(2 * m + 1)]
+        return ppm * Double(2 * m + 1) * cosTheta
     } else {
-        let coefn_1 = associatedLegendreCoef(l: l - 1, m: m)
-        let coefn_2 = associatedLegendreCoef(l: l - 2, m: m)
-        var coefn = [Double]()
-        let maxN = max(coefn_1.count, coefn_2.count) + 1
-        for i in 0..<maxN {
-            var coef = 0.0
-            if i > 0 && i-1 < coefn_1.count {
-                coef += Double(2 * l - 1) / Double(l - m) * coefn_1[i-1]
-            }
-            if i < coefn_2.count {
-                coef -= Double(l + m - 1) / Double(l - m) * coefn_2[i]
-            }
-            coefn.append(coef)
-        }
-        return coefn
+        return (cosTheta * Double(2 * l - 1) * associatedLegendre(l: l-1, m: m, cosTheta: cosTheta, sinTheta: sinTheta) - Double(l + m - 1) * associatedLegendre(l: l-2, m: m, cosTheta: cosTheta, sinTheta: sinTheta)) / Double(l - m)
     }
 }
 
@@ -317,23 +282,6 @@ class HydrogenOrbital {
         }
     }
     
-    private func generalizedLaguerre(n: Int, a: Double, x: Double) -> Double {
-        let coefs: [Double]
-        if let generalizedLCoef = intermediateResults.generalizedLCoef[n] {
-            coefs = generalizedLCoef
-        } else {
-            coefs = generalizedLaguerreCoef(n: n, a: a)
-            intermediateResults.generalizedLCoef[n] = coefs
-        }
-        var result: Double = 0
-        var xPower: Double = 1
-        for coef in coefs {
-            result += coef * xPower
-            xPower *= x
-        }
-        return result
-    }
-    
     // --- Radial functions ---
     // The radial part is split into two functions g(ρ) and f(ρ) as in the note.
     private func radial(rho: Double) -> (Double, Double) {
@@ -356,21 +304,8 @@ class HydrogenOrbital {
             (normalization, k, m) = spinorCoef(a: kappa, b: mx2, downSpinor: downSpinor, positive: positive)
             intermediateResults.spinorCoef["\(positive)_\(downSpinor)"] = (normalization, k, m)
         }
-        let coefs: [Double]
-        if let LegendrePCoef = intermediateResults.LegendrePCoef["\(k)_\(m)"] {
-            coefs = LegendrePCoef
-        } else {
-            coefs = associatedLegendreCoef(l: k, m: m)
-            intermediateResults.LegendrePCoef["\(k)_\(m)"] = coefs
-        }
-        let doubleM = Double(m)
-        var result: Double = 0
-        var xPower: Double = 1
-        for coef in coefs {
-            result += coef * xPower
-            xPower *= thetaPhase.real
-        }
-        return Complex(normalization * result * Double.pow(thetaPhase.imaginary, doubleM)) * Complex.exp(Complex(imaginary: phi * doubleM))
+        let polynomial = associatedLegendre(l: k, m: m, cosTheta: thetaPhase.real, sinTheta: thetaPhase.imaginary)
+        return Complex(normalization * polynomial) * Complex.exp(Complex(imaginary: phi * Double(m)))
     }
     
     private func spherical(theta: Double, phi: Double) -> (Complex<Double>, Complex<Double>, Complex<Double>, Complex<Double>) {
