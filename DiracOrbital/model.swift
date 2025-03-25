@@ -1,5 +1,5 @@
 //
-//  main.swift
+//  model.swift
 //  DiracOrbital
 //
 //  Created by Leo Liu on 3/23/25.
@@ -89,7 +89,7 @@ private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double) -> Co
     }
     // Normalization factor: sqrt((2l+1)/(4π) * ((l-|m|)!/(l+|m|)!))
     let normFactor = sqrt((Double(2 * l + 1) / (4 * Double.pi)) *
-                          factorial(l - absM) / factorial(l + absM))
+                          factorial(l - m) / factorial(l + m))
     
     // Associated Legendre polynomial evaluated at cos(theta)
     let legendreValue = associatedLegendre(l: l, m: m, x: cos(theta))
@@ -120,7 +120,7 @@ private func spinorCoef(a: Int, b: Int) -> Double {
     return sqrt((0.5 * Double(b + 1) + Double(a)) / Double(2 * a + 1))
 }
 
-class HydrogenOrbital {
+actor HydrogenOrbital {
     static let alpha = 0.0072973525643                 // fine structure constant
     static let c = 299792458.0                         // speed of light (m/s)
     static let hbar = 1.054571817e-34                  // reduced Planck constant (J·s)
@@ -287,29 +287,3 @@ class HydrogenOrbital {
         return waveFunction(t: t, r: r, theta: theta, phi: phi)
     }
 }
-
-// --- Example usage ---
-// (These example parameters are illustrative. In practice, one must choose t, r, θ, ϕ
-//  as well as the quantum numbers appropriately.)
-
-let startTime = Date()
-let orbital = HydrogenOrbital(z: 79, n: 4, kappa: -1, mx2: 1)
-
-var totalProbability = 0.0
-for x in (-100)...100 {
-    for y in (-100)...100 {
-        for z in (-100)...100 {
-            let wave = orbital.waveFunction(t: 0, x: Double(x) / 100 * HydrogenOrbital.rBohr, y: Double(y) / 100 * HydrogenOrbital.rBohr, z: Double(z) / 100 * HydrogenOrbital.rBohr)
-            var probability = 0.0
-            for component in wave {
-                probability += (component.conjugate * component).real
-            }
-            if !probability.isNaN {
-                totalProbability += probability * pow(HydrogenOrbital.rBohr / 100, 3)
-            }
-        }
-    }
-}
-let endTime = Date()
-
-print("Total probability in space is \(totalProbability), calculated in \(endTime.timeIntervalSince(startTime)) seconds.")
