@@ -17,7 +17,7 @@ enum Mode: String {
 struct Main {
     static func main() async {
         
-        var numberOfTasks = 16
+        var numberOfTasks = 10
         var z = 79
         var n = 4
         var kappa = -1
@@ -70,12 +70,12 @@ struct Main {
         print("Starting task:\nZ=\(z), n=\(n), k=\(kappa) (l=\(l), j=\(jx2)/2), m=\(mx2)/2\nr ranging from 0 to \(totalR) Bohr radius, on \(totalRRuns) × \(totalThetaRuns-1) (r×θ) grid, running on \(numberOfTasks) threads.")
         
         let startTime = Date()
-        var tasks = [Task<[(Double, Double)], Never>]()
+        var tasks = [Task<[(Double, Double, Double, Double)], Never>]()
         
         for i in 0..<numberOfTasks {
             let task = Task {
                 let orbital = HydrogenOrbital(z: z, n: n, kappa: kappa, mx2: mx2)
-                var results = [(Double, Double)]()
+                var results = [(Double, Double, Double, Double)]()
                 
                 for r in 0...totalRRuns {
                     let rAct = Double(r) * deltaR * HydrogenOrbital.rBohr
@@ -89,7 +89,7 @@ struct Main {
                         if !probability.isNaN {
                             let density = probability
                             probability *= 2 * Double.pi * rAct * rAct * sin(thetaAct) * dr * dTheta
-                            results.append((probability, density))
+                            results.append((probability, density, rAct / HydrogenOrbital.rBohr, thetaAct))
                         }
                     }
                 }
@@ -100,7 +100,7 @@ struct Main {
             tasks.append(task)
         }
         
-        var allResults: [(Double, Double)] = []
+        var allResults: [(Double, Double, Double, Double)] = []
         
         for task in tasks {
             let results = await task.value
@@ -111,19 +111,25 @@ struct Main {
         let benchmarks = [0.25, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.97, 0.98, 0.99]
         var sum = 0.0
         var i = 0
-        var percentiles = [Double: Double]()
-        for (prob, density) in allResults {
+        var maxR = 0.0
+        var maxTheta = 0.0
+        var percentiles = [Double: (Double, Double, Double)]()
+        for (prob, density, r, theta) in allResults {
             sum += prob
+            if r > maxR {
+                maxR = r
+                maxTheta = theta
+            }
             while i < benchmarks.count && sum >= benchmarks[i] {
-                percentiles[sum] = density
+                percentiles[sum] = (density, maxR, maxTheta)
                 i += 1
             }
         }
         
         let endTime = Date()
         
-        for (percentile, density) in percentiles.sorted(by: { $0.key < $1.key }) {
-            print(String(format: "%.1f%%: density: %.5e", percentile * 100, density))
+        for (percentile, (density, r, theta)) in percentiles.sorted(by: { $0.key < $1.key }) {
+            print(String(format: "%.1f%%: density: %.5e, at %.3f Bohr radius, %.3fπ theta", percentile * 100, density, r, theta < 0 ? 1 + theta / Double.pi : theta / Double.pi))
         }
         print("Covers \(String(format: "%.3f%%", sum * 100)) of entire space. Calculated in \(endTime.timeIntervalSince(startTime)) seconds.")
     }
