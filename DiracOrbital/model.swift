@@ -46,35 +46,14 @@ private func factorial(_ n: Int) -> Double {
 // P_m^m(x) = (-1)^m (2m-1)!! (1-x^2)^(m/2)
 // P_{m+1}^m(x) = x (2m+1) P_m^m(x)
 // P_l^m(x) = ((2l-1)x P_{l-1}^m(x) - (l+m-1) P_{l-2}^m(x))/(l-m)  for l > m
-private func associatedLegendre(l: Int, m: Int, x: Double) -> Double {
-    let absM = abs(m)
-    let sign = absM % 2 == 0 ? 1.0 : -1.0
+private func associatedLegendre(l: Int, absM: Int, cosTheta: Double) -> Double {
     if l < absM {
         return 0.0
+    } else if l == absM {
+        return doubleFactorial(2 * absM - 1)
+    } else {
+        return ((Double(2 * l - 1) * cosTheta * associatedLegendre(l: l-1, absM: absM, cosTheta: cosTheta)) - (Double(l + absM - 1) * associatedLegendre(l: l-2, absM: absM, cosTheta: cosTheta))) / Double(l - absM)
     }
-    if m < 0 {
-        return sign * factorial(l - absM) / factorial(l + absM) * associatedLegendre(l: l, m: absM, x: x)
-    }
-    
-    // Base: P_absM^absM(x)
-    var p_mm = 1.0
-    if absM > 0 {
-        let factor = 1.0 - x * x
-        p_mm = sign * doubleFactorial(2 * absM - 1) * pow(factor, Double(absM) / 2)
-    }
-    
-    if l == absM {
-        return p_mm
-    }
-    
-    // Next: P_{absM+1}^absM(x)
-    let p_mmp1 = x * Double(2 * absM + 1) * p_mm
-    if l == absM + 1 {
-        return p_mmp1
-    }
-    
-    // Recurrence for l > absM+1
-    return ((Double(2 * l - 1) * x * associatedLegendre(l: l-1, m: absM, x: x)) - (Double(l + absM - 1) * associatedLegendre(l: l-2, m: absM, x: x))) / Double(l - absM)
 }
 
 // --- Spherical Harmonic Function ---
@@ -84,20 +63,13 @@ private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double) -> Co
         return sphericalHarmonic(l: -l - 1, m: m, theta: theta, phi: phi)
     }
     let absM = abs(m)
-    if l > 0 && absM > l {
-        return .zero
-    }
-    // Normalization factor: sqrt((2l+1)/(4π) * ((l-|m|)!/(l+|m|)!))
-    let normFactor = sqrt((Double(2 * l + 1) / (4 * Double.pi)) *
-                          factorial(l - m) / factorial(l + m))
-    
-    // Associated Legendre polynomial evaluated at cos(theta)
-    let legendreValue = associatedLegendre(l: l, m: m, x: cos(theta))
-    
-    // e^(i m phi)
+
+    let sign = (m < 0 || m.isMultiple(of: 2)) ? 1.0 : -1.0
+    let normFactor = sign * sqrt((Double(2 * l + 1) / (4 * Double.pi)) * factorial(l - absM) / factorial(l + absM))
+
+    let legendreValue = associatedLegendre(l: l, absM: absM, cosTheta: cos(theta)) * Double.pow(sin(theta), absM)
     let expFactor = Complex.exp(Complex(imaginary: Double(m) * phi))
     
-    // Combine all parts: norm * P_l^m(cos(theta)) * exp(i m phi)
     return Complex<Double>(normFactor) * Complex(legendreValue, 0) * expFactor
 }
 
@@ -109,8 +81,6 @@ private func generalizedLaguerre(n: Int, alpha: Double, x: Double) -> Double {
         return 0.0
     } else if n == 0 {
         return 1.0
-    } else if n == 1 {
-        return alpha + 1.0 - x
     } else {
        return ((Double(2 * n - 1) + alpha - x) * generalizedLaguerre(n: n-1, alpha: alpha, x: x) - (Double(n - 1) + alpha) * generalizedLaguerre(n: n-2, alpha: alpha, x: x)) / Double(n)
     }
@@ -217,7 +187,7 @@ actor HydrogenOrbital {
                 let kGammaTerm = Double(kappa) * relativeEnergy / gamma
                 normalization = lambda / (Double(nk) + gamma) * factorateRatio * 0.5 * (kGammaTerm * kGammaTerm + kGammaTerm)
             } else {
-                normalization = lambda * 0.5 * pow(zalpha / gamma, 2.0) / Double(kappa * kappa) / Double.gamma(1 + 2 * gamma)
+                normalization = lambda * 0.5 * Double.pow(zalpha / gamma, 2) / Double(kappa * kappa) / Double.gamma(1 + 2 * gamma)
             }
             normalization = sqrt(normalization / commonFactor)
             intermediateResults.normalization = normalization
