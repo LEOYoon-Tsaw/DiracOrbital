@@ -8,6 +8,28 @@
 import Foundation
 import Numerics
 
+struct Bispinor {
+    let storage: [Complex<Double>]
+    
+    init(_ posUp: Complex<Double>, _ posDn: Complex<Double>, _ negUp: Complex<Double>, _ negDn: Complex<Double>) {
+        storage = [posUp, posDn, negUp, negDn]
+    }
+    
+    var density: Double {
+        (storage[0].conjugate * storage[0] + storage[1].conjugate * storage[1] + storage[2].conjugate * storage[2] + storage[3].conjugate * storage[3]).real
+    }
+    
+    var flow: [Double] {
+        [(storage[3].conjugate * storage[0] + storage[2].conjugate * storage[1] + storage[1].conjugate * storage[2] + storage[0].conjugate * storage[3]).real,
+         (-storage[3].conjugate * storage[0] + storage[2].conjugate * storage[1] - storage[1].conjugate * storage[2] + storage[0].conjugate * storage[3]).imaginary,
+         (storage[2].conjugate * storage[0] - storage[3].conjugate * storage[1] + storage[0].conjugate * storage[2] - storage[1].conjugate * storage[3]).real,]
+    }
+    
+    var densityFlow: [Double] {
+        [density] + flow
+    }
+}
+
 private struct IntermediateResults {
     var zalpha: Double?
     var gamma: Double?
@@ -91,13 +113,13 @@ private func spinorCoef(a: Int, b: Int) -> Double {
 }
 
 actor HydrogenOrbital {
-    static let alpha = 0.0072973525643                 // fine structure constant
-    static let c = 299792458.0                         // speed of light (m/s)
-    static let hbar = 1.054571817e-34                  // reduced Planck constant (J·s)
-    static let me = 9.10938356e-31                     // electron mass in kg
-    static let rBohr = hbar / (me * c * alpha)         // Bohr radius in m
-    static let halfPeriod = Double.pi * rBohr * alpha / c    // half period of global phase change
-    static let mechbar = me * c / hbar                 // me * c / hbar
+    static let alpha = 0.0072973525643                     // fine structure constant
+    static let c = 299792458.0                             // speed of light (m/s)
+//    static let hbar = 1.054571817e-34                    // reduced Planck constant (J·s)
+//    static let me = 9.10938356e-31                       // electron mass in kg
+    static let halfPeriod = Double.pi / (mechbar * c)      // half period of global phase change
+    static let mechbar = 1.0 / alpha                       // me * c / hbar
+    static let rBohr = 1.0                                 // Bohr radius in m
     
     private var intermediateResults = IntermediateResults()
     
@@ -222,7 +244,7 @@ actor HydrogenOrbital {
         return (Y1, Y2, Y3, Y4)
     }
     
-    func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> [Complex<Double>] {
+    func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> Bispinor {
         // Radial parts: g(ρ) and f(ρ)
         let rho = 2 * lambda * r
         let (g, f) = radial(rho: rho)
@@ -246,10 +268,10 @@ actor HydrogenOrbital {
         let negUp = commonFactor * Complex(0, f) * YNegUp
         let negDn = commonFactor * Complex(0, f) * YNegDn
         
-        return [posUp, posDn, negUp, negDn]
+        return Bispinor(posUp, posDn, negUp, negDn)
     }
     
-    func waveFunction(t: Double, x: Double, y: Double, z: Double) -> [Complex<Double>] {
+    func waveFunction(t: Double, x: Double, y: Double, z: Double) -> Bispinor {
         let rxy = Double.hypot(x, y)
         let r = Double.hypot(rxy, z)
         let theta = Double.atan2(y: rxy, x: z)

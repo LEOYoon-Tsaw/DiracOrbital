@@ -82,13 +82,9 @@ struct Main {
                     for theta in (i * totalThetaRuns / numberOfTasks)..<((i+1) * totalThetaRuns / numberOfTasks) {
                         let thetaAct = Double(theta) * deltaTheta * Double.pi
                         let wave = await orbital.waveFunction(t: 0, r: Double(r) * deltaR * HydrogenOrbital.rBohr, theta: Double(theta) * deltaTheta * Double.pi, phi: 0)
-                        var probability = 0.0
-                        for component in wave {
-                            probability += (component.conjugate * component).real
-                        }
-                        if !probability.isNaN {
-                            let density = probability
-                            probability *= 2 * Double.pi * rAct * rAct * sin(thetaAct) * dr * dTheta
+                        let density = wave.density
+                        if !density.isNaN {
+                            let probability = density * 2 * Double.pi * rAct * rAct * sin(thetaAct) * dr * dTheta
                             results.append((probability, density, rAct / HydrogenOrbital.rBohr, thetaAct))
                         }
                     }
