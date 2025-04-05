@@ -8,6 +8,18 @@
 import Foundation
 import Numerics
 
+struct Vector {
+    let storage: [Double]
+    
+    init(_ t: Double, _ x: Double, _ y: Double, _ z: Double) {
+        storage = [t, x, y, z]
+    }
+    
+    var abs: Double {
+        sqrt(storage[0] * storage[0] - storage[1] * storage[1] - storage[2] * storage[2] - storage[3] * storage[3])
+    }
+}
+
 struct Bispinor {
     let storage: [Complex<Double>]
     
@@ -25,8 +37,9 @@ struct Bispinor {
          (storage[2].conjugate * storage[0] - storage[3].conjugate * storage[1] + storage[0].conjugate * storage[2] - storage[1].conjugate * storage[3]).real,]
     }
     
-    var densityFlow: [Double] {
-        [density] + flow
+    var densityFlow: Vector {
+        let flow = self.flow
+        return Vector(density, flow[0], flow[1], flow[2])
     }
 }
 
