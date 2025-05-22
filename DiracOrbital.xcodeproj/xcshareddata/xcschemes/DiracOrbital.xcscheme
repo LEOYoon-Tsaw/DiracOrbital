@@ -53,7 +53,7 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-m 3 -k -4"
+            argument = "-Z 1 -n 5 -m 3 -k -2 --deltaR 0.02 --totalR 100"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>

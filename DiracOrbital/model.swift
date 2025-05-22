@@ -132,7 +132,7 @@ actor HydrogenOrbital {
 //    static let me = 9.10938356e-31                       // electron mass in kg
     static let halfPeriod = Double.pi / (mechbar * c)      // half period of global phase change
     static let mechbar = 1.0 / alpha                       // me * c / hbar
-    static let rBohr = 1.0                                 // Bohr radius in m
+    static let rBohr = 1.0 / mechbar / alpha               // Bohr radius in m
     
     private var intermediateResults = IntermediateResults()
     
