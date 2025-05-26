@@ -20,6 +20,14 @@ struct Vector {
     }
 }
 
+func dot(lhs: Bispinor, rhs: Bispinor) -> Complex<Double> {
+    var result = Complex<Double>(0, 0)
+    for i in 0..<4 {
+        result += lhs.storage[i].conjugate * rhs.storage[i]
+    }
+    return result
+}
+
 struct Bispinor {
     let storage: [Complex<Double>]
     
@@ -35,6 +43,12 @@ struct Bispinor {
         [(storage[3].conjugate * storage[0] + storage[2].conjugate * storage[1] + storage[1].conjugate * storage[2] + storage[0].conjugate * storage[3]).real,
          (-storage[3].conjugate * storage[0] + storage[2].conjugate * storage[1] - storage[1].conjugate * storage[2] + storage[0].conjugate * storage[3]).imaginary,
          (storage[2].conjugate * storage[0] - storage[3].conjugate * storage[1] + storage[0].conjugate * storage[2] - storage[1].conjugate * storage[3]).real,]
+    }
+    
+    var spin: [Double] {
+        [(storage[0].conjugate * storage[1] + storage[1].conjugate * storage[0] + storage[2].conjugate * storage[3] + storage[3].conjugate * storage[2]).real / 2,
+         (storage[0].conjugate * storage[1] - storage[1].conjugate * storage[0] + storage[2].conjugate * storage[3] - storage[3].conjugate * storage[2]).imaginary / 2,
+         (storage[0].conjugate * storage[0] - storage[1].conjugate * storage[1] + storage[2].conjugate * storage[2] - storage[3].conjugate * storage[3]).real / 2,]
     }
     
     var densityFlow: Vector {
@@ -123,6 +137,22 @@ private func generalizedLaguerre(n: Int, alpha: Double, x: Double) -> Double {
 
 private func spinorCoef(a: Int, b: Int) -> Double {
     return sqrt((0.5 * Double(b + 1) + Double(a)) / Double(2 * a + 1))
+}
+
+private func sphericalHarmonicDerivatives(l: Int, m: Int, theta: Double, phi: Double) -> [Complex<Double>] {
+    let y1 = sphericalHarmonic(l: l, m: m, theta: theta, phi: phi)
+    let y2 = sphericalHarmonic(l: l, m: m + 1, theta: theta, phi: phi)
+    var yDTheta = Complex(Double(m) / tan(theta)) * y1
+    yDTheta += Complex<Double>.exp(.init(0, -phi)) * Complex<Double>.sqrt(Complex<Double>((l - m) * (l + m + 1))) * y2
+    return [y1, yDTheta, .init(0, Double(m)) * y1]
+}
+
+private func rThetaPhiDXYZ(r: Double, theta: Double, phi: Double) -> [[Double]] {
+    return [
+        [sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)],
+        [cos(theta) * cos(phi) / r, cos(theta) * sin(phi) / r, -sin(theta) / r],
+        [-sin(phi) / r / sin(theta), cos(phi) / r / sin(theta), 0.0]
+    ]
 }
 
 actor HydrogenOrbital {
@@ -257,6 +287,15 @@ actor HydrogenOrbital {
         return (Y1, Y2, Y3, Y4)
     }
     
+    private func sphericalDerivatives(theta: Double, phi: Double) -> [[Complex<Double>]] {
+        return [
+            sphericalHarmonicDerivatives(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi).map { $0 * Complex(spinorCoef(a: kappa, b: -mx2)) },
+            sphericalHarmonicDerivatives(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi).map { $0 * Complex(-sgn(kappa) * spinorCoef(a: kappa, b: mx2))},
+            sphericalHarmonicDerivatives(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi).map { $0 * Complex(0, spinorCoef(a: -kappa, b: -mx2))},
+            sphericalHarmonicDerivatives(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi).map { $0 * Complex(0, sgn(kappa) * spinorCoef(a: -kappa, b: mx2)) },
+        ]
+    }
+    
     func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> Bispinor {
         // Radial parts: g(ρ) and f(ρ)
         let rho = 2 * lambda * r
@@ -290,5 +329,66 @@ actor HydrogenOrbital {
         let theta = Double.atan2(y: rxy, x: z)
         let phi = Double.atan2(y: y, x: x)
         return waveFunction(t: t, r: r, theta: theta, phi: phi)
+    }
+    
+    // For derivatives
+    private func gfTilde(rho: Double) -> [Double] {
+        let commonFactor = Double.pow(rho, gamma) * exp(-rho / 2)
+        let l11 = generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma + 1, x: rho)
+        let l12 = generalizedLaguerre(n: self.nk - 2, alpha: 2 * self.gamma + 2, x: rho)
+        let l21 = generalizedLaguerre(n: self.nk, alpha: 2 * self.gamma - 1, x: rho)
+        let l22 = generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma, x: rho)
+        let firstTerm = (self.gamma / rho - 0.5) * l11 - l12
+        let lastTerm = ((self.gamma - 1.0) / rho - 0.5) * l21 - l22
+        let gammaKappa = self.gamma - Double(self.kappa)
+        return [
+            commonFactor * (self.zalpha * rho * firstTerm + gammaKappa * self.gfLambda * lastTerm),
+            commonFactor * (gammaKappa * rho * firstTerm + self.zalpha * self.gfLambda * lastTerm),
+            commonFactor * (self.zalpha * rho * l11 + gammaKappa * self.gfLambda * l21),
+            commonFactor * (gammaKappa * rho * l11 + self.zalpha * self.gfLambda * l21),
+        ]
+    }
+    
+    private func sphericalCoorDerivatives(r: Double, theta: Double, phi: Double) -> [[Complex<Double>]] {
+        let rho = 2 * lambda * r
+        let gf = gfTilde(rho: rho)
+        let sphericalY = sphericalDerivatives(theta: theta, phi: phi)
+        let o0 = [Complex(2 * lambda * gf[0]) * sphericalY[0][0], Complex(gf[2]) * sphericalY[0][1], Complex(gf[2]) * sphericalY[0][2]]
+        let o1 = [Complex(2 * lambda * gf[0]) * sphericalY[1][0], Complex(gf[2]) * sphericalY[1][1], Complex(gf[2]) * sphericalY[1][2]]
+        let o2 = [Complex(2 * lambda * gf[1]) * sphericalY[2][0], Complex(gf[3]) * sphericalY[2][1], Complex(gf[3]) * sphericalY[2][2]]
+        let o3 = [Complex(2 * lambda * gf[1]) * sphericalY[3][0], Complex(gf[3]) * sphericalY[3][1], Complex(gf[3]) * sphericalY[3][2]]
+        return [o0, o1, o2, o3]
+    }
+    
+    func waveFunctionDerivatives(t: Double, r: Double, theta: Double, phi: Double) -> [Bispinor] {
+        let sphericalCoor = sphericalCoorDerivatives(r: r, theta: theta, phi: phi)
+        let coorDerivatives = rThetaPhiDXYZ(r: r, theta: theta, phi: phi)
+        let energy = Self.mechbar * Self.c * relativeEnergy
+        let globalPhase = Complex<Double>.exp(Complex(imaginary: -energy * t))
+        let commonFactor = globalPhase * Complex(normalization / r)
+        
+        var matrix = Array(repeating: Array(repeating: Complex<Double>(0.0, 0.0), count: 3), count: 4)
+        for i in 0..<4 {
+            for j in 0..<3 {
+                for k in 0..<3 {
+                    matrix[i][j] += sphericalCoor[i][k] * Complex(coorDerivatives[k][j])
+                }
+                matrix[i][j] *= commonFactor
+            }
+        }
+        
+        return [
+            Bispinor(matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0]),
+            Bispinor(matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1]),
+            Bispinor(matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2]),
+        ]
+    }
+    
+    func waveFunctionDerivatives(t: Double, x: Double, y: Double, z: Double) -> [Bispinor] {
+        let rxy = Double.hypot(x, y)
+        let r = Double.hypot(rxy, z)
+        let theta = Double.atan2(y: rxy, x: z)
+        let phi = Double.atan2(y: y, x: x)
+        return waveFunctionDerivatives(t: t, r: r, theta: theta, phi: phi)
     }
 }
