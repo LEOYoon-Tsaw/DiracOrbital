@@ -10,7 +10,7 @@ import Foundation
 enum Mode: String {
     case tasks = "--numberOfTasks", z = "-Z", n = "-n", kappa = "-k", m = "-m"
     case deltaR = "--deltaR", deltaTheta = "--deltaTheta", totalR = "--totalR"
-    case decomposeAngular = "--decomposeAngular"
+    case angularMomentum = "--angularMomentum"
     case help = "--help", h = "-h"
 }
 
@@ -26,7 +26,7 @@ struct Main {
         var deltaR = 0.0002
         var deltaTheta = 0.001
         var totalR = 1.0
-        var decomposeAngular: Bool = false
+        var angularMomentum: Bool = false
         
         var mode: Mode?
         let args = CommandLine.arguments
@@ -56,10 +56,10 @@ struct Main {
             } else {
                 mode = Mode(rawValue: arg)
                 switch mode {
-                case .decomposeAngular:
-                    decomposeAngular = true
+                case .angularMomentum:
+                    angularMomentum = true
                 case .help, .h:
-                    print("Possible arguments: -Z (int), -n (int), -k (kappa, Dirac quantum number), -m (2 × m, integer), and --deltaR (float in Bohr radius), --deltaTheta (float, 1 = π), --totalR (float in Bohr radius), --numberOfTasks (int), and --decomposeAngular")
+                    print("Possible arguments: -Z (int), -n (int), -k (kappa, Dirac quantum number), -m (2 × m, integer), and --deltaR (float in Bohr radius), --deltaTheta (float, 1 = π), --totalR (float in Bohr radius), --numberOfTasks (int), and --angularMomentum")
                     return
                 default:
                     break
@@ -77,12 +77,12 @@ struct Main {
         print("Starting task:\nZ=\(z), n=\(n), k=\(kappa) (l=\(l), j=\(jx2)/2), m=\(mx2)/2\nr ranging from 0 to \(totalR) Bohr radius, on \(totalRRuns) × \(totalThetaRuns-1) (r×θ) grid, running on \(numberOfTasks) threads.")
         
         let startTime = Date()
-        var tasks = [Task<[(Double, Double, Double, Double, Double, Double?, Double?)], Never>]()
+        var tasks = [Task<[(Double, Double, Double, Double, Double, Double?)], Never>]()
         
         for i in 0..<numberOfTasks {
             let task = Task {
                 let orbital = HydrogenOrbital(z: z, n: n, kappa: kappa, mx2: mx2)
-                var results = [(Double, Double, Double, Double, Double, Double?, Double?)]()
+                var results = [(Double, Double, Double, Double, Double, Double?)]()
                 
                 for r in 0...totalRRuns {
                     let rAct = Double(r) * deltaR * HydrogenOrbital.rBohr
@@ -96,15 +96,14 @@ struct Main {
                         let flow = wave.flow
                         if !density.isNaN && !density.isZero {
                             let probability = density * phiDist * dThetaDist * dr
-                            let magnetic = flow[1] * x * phiDist * dThetaDist * dr
-                            var actSpin: Double? = nil
-                            var orbitalMom: Double? = nil
-                            if decomposeAngular {
+                            let magnetic = -flow[1] * x * phiDist * dThetaDist * dr
+                            var angular: Double? = nil
+                            if angularMomentum {
                                 let waveDeriv = await orbital.waveFunctionDerivatives(t: 0, r: rAct, theta: thetaAct, phi: 0)
-                                orbitalMom = x * dot(lhs: wave, rhs: waveDeriv[1]).imaginary * phiDist * dThetaDist * dr
-                                actSpin = wave.spin[2] * phiDist * dThetaDist * dr
+                                let energeStressTensor = await orbital.energyTensor(waveF: wave, waveFDerivatives: waveDeriv)
+                                angular = energeStressTensor.momentum[1] * x * phiDist * dThetaDist * dr
                             }
-                            results.append((probability, density, rAct / HydrogenOrbital.rBohr, thetaAct, magnetic * HydrogenOrbital.mechbar, actSpin, orbitalMom))
+                            results.append((probability, density, rAct / HydrogenOrbital.rBohr, thetaAct, magnetic * HydrogenOrbital.mechbar, angular))
                         }
                     }
                 }
@@ -115,7 +114,7 @@ struct Main {
             tasks.append(task)
         }
         
-        var allResults: [(Double, Double, Double, Double, Double, Double?, Double?)] = []
+        var allResults: [(Double, Double, Double, Double, Double, Double?)] = []
         
         for task in tasks {
             let results = await task.value
@@ -126,44 +125,40 @@ struct Main {
         let benchmarks = [0.25, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 0.97, 0.98, 0.99]
         var sum = 0.0
         var magnSum = 0.0
-        var spinSum = 0.0
-        var orbitalSum = 0.0
+        var angSum = 0.0
         var i = 0
         var maxR = 0.0
         var maxTheta = 0.0
-        var percentiles = [Double: (Double, Double, Double, Double, Double, Double)]()
-        for (prob, density, r, theta, magnetic, spin, orbital) in allResults {
+        var percentiles = [Double: (Double, Double, Double, Double, Double)]()
+        for (prob, density, r, theta, magnetic, angular) in allResults {
             sum += prob
             magnSum += magnetic
-            if let spin {
-                spinSum += spin
-            }
-            if let orbital, !orbital.isNaN {
-                orbitalSum += orbital
+            if let angular, !angular.isNaN {
+                angSum += angular
             }
             if r > maxR {
                 maxR = r
                 maxTheta = theta
             }
             while i < benchmarks.count && sum >= benchmarks[i] {
-                percentiles[sum] = (density, maxR, maxTheta, magnSum, spinSum, orbitalSum)
+                percentiles[sum] = (density, maxR, maxTheta, magnSum, angSum)
                 i += 1
             }
         }
         
         let endTime = Date()
         
-        for (percentile, (density, r, theta, magnetic, spin, orbital)) in percentiles.sorted(by: { $0.key < $1.key }) {
+        for (percentile, (density, r, theta, magnetic, angular)) in percentiles.sorted(by: { $0.key < $1.key }) {
             var line = String(format: "%.1f%%: density: %.5e, at %.3f Bohr radius, %.3fπ theta; covered magnetic momentum: %.3fμB", percentile * 100, density, r, theta < 0 ? 1 + theta / Double.pi : theta / Double.pi, magnetic)
-            if decomposeAngular {
-                line += String(format: ", spin: %.3fħ, orbital: %.3fħ", spin, orbital)
+            if angularMomentum {
+                line += String(format: ", angular momentum: %.3fħ", angular)
             }
             line += "."
             print(line)
         }
         var line = "Covers \(String(format: "%.3f%%", sum * 100)) of entire space, cumulating \(String(format: "%.3f", magnSum))μB magnetic momentum"
-        if decomposeAngular {
-            line += ", \(String(format: "%.3f", spinSum))ħ spin, \(String(format: "%.3f", orbitalSum))ħ orbital"
+        if angularMomentum {
+            line += ", \(String(format: "%.3f", angSum))ħ angular momemtum"
         }
         line += ". Calculated in \(String(format: "%.2f", endTime.timeIntervalSince(startTime))) seconds."
         print(line)

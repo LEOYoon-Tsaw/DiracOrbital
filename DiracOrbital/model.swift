@@ -8,8 +8,15 @@
 import Foundation
 import Numerics
 
+private let gammaMatrices: InlineArray<4, InlineArray<4, InlineArray<4, Complex<Double>>>> = [
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, -1]],
+    [[0, 0, 0, 1], [0, 0, 1, 0], [0, -1, 0, 0], [-1, 0, 0, 0]],
+    [[0, 0, 0, -.i], [0, 0, .i ,0], [0, .i, 0, 0], [-.i, 0, 0, 0]],
+    [[0, 0, 1, 0], [0, 0, 0, -1], [-1, 0, 0, 0], [0, 1, 0, 0]],
+]
+
 struct Vector {
-    let storage: [Double]
+    let storage: InlineArray<4, Double>
     
     init(_ t: Double, _ x: Double, _ y: Double, _ z: Double) {
         storage = [t, x, y, z]
@@ -17,6 +24,22 @@ struct Vector {
     
     var abs: Double {
         sqrt(storage[0] * storage[0] - storage[1] * storage[1] - storage[2] * storage[2] - storage[3] * storage[3])
+    }
+}
+
+struct Tensor {
+    let storage: InlineArray<4, InlineArray<4, Double>>
+    
+    init(_ storage: InlineArray<4, InlineArray<4, Double>>) {
+        self.storage = storage
+    }
+    
+    var energy: Double {
+        storage[0][0]
+    }
+    
+    var momentum: InlineArray<3, Double> {
+        [storage[0][1], storage[0][2], storage[0][3]]
     }
 }
 
@@ -29,7 +52,7 @@ func dot(lhs: Bispinor, rhs: Bispinor) -> Complex<Double> {
 }
 
 struct Bispinor {
-    let storage: [Complex<Double>]
+    let storage: InlineArray<4, Complex<Double>>
     
     init(_ posUp: Complex<Double>, _ posDn: Complex<Double>, _ negUp: Complex<Double>, _ negDn: Complex<Double>) {
         storage = [posUp, posDn, negUp, negDn]
@@ -54,6 +77,16 @@ struct Bispinor {
     var densityFlow: Vector {
         let flow = self.flow
         return Vector(density, flow[0], flow[1], flow[2])
+    }
+}
+
+extension Bispinor {
+    static func *(lhs: Bispinor, rhs: Complex<Double>) -> Bispinor {
+        return Bispinor(lhs.storage[0] * rhs, lhs.storage[1] * rhs, lhs.storage[2] * rhs, lhs.storage[3] * rhs)
+    }
+    
+    static func *(lhs: Complex<Double>, rhs: Bispinor) -> Bispinor {
+        return Bispinor(rhs.storage[0] * lhs, rhs.storage[1] * lhs, rhs.storage[2] * lhs, rhs.storage[3] * lhs)
     }
 }
 
@@ -360,7 +393,7 @@ actor HydrogenOrbital {
         return [o0, o1, o2, o3]
     }
     
-    func waveFunctionDerivatives(t: Double, r: Double, theta: Double, phi: Double) -> [Bispinor] {
+    func waveFunctionDerivatives(t: Double, r: Double, theta: Double, phi: Double) -> InlineArray<3, Bispinor> {
         let sphericalCoor = sphericalCoorDerivatives(r: r, theta: theta, phi: phi)
         let coorDerivatives = rThetaPhiDXYZ(r: r, theta: theta, phi: phi)
         let energy = Self.mechbar * Self.c * relativeEnergy
@@ -384,11 +417,43 @@ actor HydrogenOrbital {
         ]
     }
     
-    func waveFunctionDerivatives(t: Double, x: Double, y: Double, z: Double) -> [Bispinor] {
+    func waveFunctionDerivatives(t: Double, x: Double, y: Double, z: Double) -> InlineArray<3, Bispinor> {
         let rxy = Double.hypot(x, y)
         let r = Double.hypot(rxy, z)
         let theta = Double.atan2(y: rxy, x: z)
         let phi = Double.atan2(y: y, x: x)
         return waveFunctionDerivatives(t: t, r: r, theta: theta, phi: phi)
     }
+    
+    func energyTensor(waveF: Bispinor, waveFDerivatives: InlineArray<3, Bispinor>) -> Tensor {
+        let dWaveF = [
+            Complex(0, -HydrogenOrbital.mechbar * relativeEnergy) * waveF,
+            -1 * waveFDerivatives[0],
+            -1 * waveFDerivatives[1],
+            -1 * waveFDerivatives[2],
+        ]
+        var result: InlineArray<4, InlineArray<4, Double>> = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
+        for mu in 0..<4 {
+            for nu in mu..<4 {
+                for i in 0..<4 {
+                    for j in 0..<4 {
+                        for k in 0..<4 {
+                            result[mu][nu] -= (waveF.storage[i].conjugate * gammaMatrices[0][i][j] * gammaMatrices[mu][j][k] * dWaveF[nu].storage[k]).imaginary
+                            result[mu][nu] -= (waveF.storage[i].conjugate * gammaMatrices[0][i][j] * gammaMatrices[nu][j][k] * dWaveF[mu].storage[k]).imaginary
+                            result[mu][nu] += (waveF.storage[k] * gammaMatrices[0][i][j] * gammaMatrices[mu][j][k] * dWaveF[nu].storage[i].conjugate).imaginary
+                            result[mu][nu] += (waveF.storage[k] * gammaMatrices[0][i][j] * gammaMatrices[nu][j][k] * dWaveF[mu].storage[i].conjugate).imaginary
+                        }
+                    }
+                }
+                result[mu][nu] *= 0.25
+            }
+        }
+        for mu in 1..<4 {
+            for nu in 0..<mu {
+                result[mu][nu] = result[nu][mu]
+            }
+        }
+        return Tensor(result)
+    }
 }
+

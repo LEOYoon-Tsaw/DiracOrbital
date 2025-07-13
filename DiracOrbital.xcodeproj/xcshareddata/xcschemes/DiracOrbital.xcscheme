@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Scheme
-   LastUpgradeVersion = "1620"
+   LastUpgradeVersion = "2600"
    version = "1.7">
    <BuildAction
       parallelizeBuildables = "YES"
@@ -53,7 +53,7 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "-Z 1 -n 5 -m 1 -k 3 --deltaR 0.02 --totalR 100"
+            argument = "-Z 1 -n 5 -m 1 -k -3 --deltaR 0.02 --totalR 100 --angularMomentum"
             isEnabled = "YES">
          </CommandLineArgument>
       </CommandLineArguments>
