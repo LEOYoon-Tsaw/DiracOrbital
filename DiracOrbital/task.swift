@@ -100,7 +100,7 @@ struct Main {
                             var angular: Double? = nil
                             if angularMomentum {
                                 let waveDeriv = await orbital.waveFunctionDerivatives(t: 0, r: rAct, theta: thetaAct, phi: 0)
-                                let energeStressTensor = await orbital.energyTensor(waveF: wave, waveFDerivatives: waveDeriv)
+                                let energeStressTensor = await wave.energyTensor(waveFDerivatives: waveDeriv)
                                 angular = energeStressTensor.momentum[1] * x * phiDist * dThetaDist * dr
                             }
                             results.append((probability, density, rAct / HydrogenOrbital.rBohr, thetaAct, magnetic * HydrogenOrbital.mechbar, angular))
@@ -149,14 +149,14 @@ struct Main {
         let endTime = Date()
         
         for (percentile, (density, r, theta, magnetic, angular)) in percentiles.sorted(by: { $0.key < $1.key }) {
-            var line = String(format: "%.1f%%: density: %.5e, at %.3f Bohr radius, %.3fπ theta; covered magnetic momentum: %.3fμB", percentile * 100, density, r, theta < 0 ? 1 + theta / Double.pi : theta / Double.pi, magnetic)
+            var line = String(format: "%.1f%% coverage -> density: %.5e, at %.3f rB, θ = %.3fπ; covers magnetic moment: %.3fμB", percentile * 100, density, r, theta < 0 ? 1 + theta / Double.pi : theta / Double.pi, magnetic)
             if angularMomentum {
                 line += String(format: ", angular momentum: %.3fħ", angular)
             }
             line += "."
             print(line)
         }
-        var line = "Covers \(String(format: "%.3f%%", sum * 100)) of entire space, cumulating \(String(format: "%.3f", magnSum))μB magnetic momentum"
+        var line = "Covers \(String(format: "%.3f%%", sum * 100)) probability, accumulating \(String(format: "%.3f", magnSum))μB magnetic moment"
         if angularMomentum {
             line += ", \(String(format: "%.3f", angSum))ħ angular momemtum"
         }

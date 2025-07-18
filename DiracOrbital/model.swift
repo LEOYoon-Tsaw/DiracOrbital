@@ -9,10 +9,10 @@ import Foundation
 import Numerics
 
 private let gammaMatrices: InlineArray<4, InlineArray<4, InlineArray<4, Complex<Double>>>> = [
-    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, -1]],
-    [[0, 0, 0, 1], [0, 0, 1, 0], [0, -1, 0, 0], [-1, 0, 0, 0]],
-    [[0, 0, 0, -.i], [0, 0, .i ,0], [0, .i, 0, 0], [-.i, 0, 0, 0]],
-    [[0, 0, 1, 0], [0, 0, 0, -1], [-1, 0, 0, 0], [0, 1, 0, 0]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    [[0, 0, 0, 1], [0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0]],
+    [[0, 0, 0, -.i], [0, 0, .i ,0], [0, -.i, 0, 0], [.i, 0, 0, 0]],
+    [[0, 0, 1, 0], [0, 0, 0, -1], [1, 0, 0, 0], [0, -1, 0, 0]],
 ]
 
 struct Vector {
@@ -43,6 +43,27 @@ struct Tensor {
     }
 }
 
+struct BispinorDerivative {
+    let energy: Double
+    let commonFactor: Complex<Double>
+    let spherDeriv: InlineArray<4, InlineArray<3, Complex<Double>>>
+    let spherCoorDeriv: InlineArray<3, InlineArray<3, Double>>
+    
+    func compute(waveFunction: Bispinor) async -> InlineArray<4, InlineArray<4, Complex<Double>>> {
+        var matrix: InlineArray<4, InlineArray<4, Complex<Double>>> = .init(repeating: .init(repeating: 0))
+        for i in 0..<4 {
+            for j in 0..<3 {
+                for k in 0..<3 {
+                    matrix[j+1][i] += spherDeriv[i][k] * Complex(spherCoorDeriv[k][j])
+                }
+                matrix[j+1][i] *= -commonFactor
+            }
+            matrix[0][i] = Complex<Double>(0, -energy) * waveFunction.storage[i]
+        }
+        return matrix
+    }
+}
+
 func dot(lhs: Bispinor, rhs: Bispinor) -> Complex<Double> {
     var result = Complex<Double>(0, 0)
     for i in 0..<4 {
@@ -56,6 +77,9 @@ struct Bispinor {
     
     init(_ posUp: Complex<Double>, _ posDn: Complex<Double>, _ negUp: Complex<Double>, _ negDn: Complex<Double>) {
         storage = [posUp, posDn, negUp, negDn]
+    }
+    init(_ storage: InlineArray<4, Complex<Double>>) {
+        self.storage = storage
     }
     
     var density: Double {
@@ -87,6 +111,32 @@ extension Bispinor {
     
     static func *(lhs: Complex<Double>, rhs: Bispinor) -> Bispinor {
         return Bispinor(rhs.storage[0] * lhs, rhs.storage[1] * lhs, rhs.storage[2] * lhs, rhs.storage[3] * lhs)
+    }
+}
+
+extension Bispinor {
+    func energyTensor(waveFDerivatives: BispinorDerivative) async -> Tensor {
+        let derivative = await waveFDerivatives.compute(waveFunction: self)
+        var result: InlineArray<4, InlineArray<4, Double>> = .init(repeating: .init(repeating: 0))
+        for mu in 0..<4 {
+            for nu in mu..<4 {
+                for i in 0..<4 {
+                    for j in 0..<4 {
+                        result[mu][nu] -= (storage[i].conjugate * gammaMatrices[mu][i][j] * derivative[nu][j]).imaginary
+                        result[mu][nu] -= (storage[i].conjugate * gammaMatrices[nu][i][j] * derivative[mu][j]).imaginary
+                        result[mu][nu] += (storage[j] * gammaMatrices[mu][i][j] * derivative[nu][i].conjugate).imaginary
+                        result[mu][nu] += (storage[j] * gammaMatrices[nu][i][j] * derivative[mu][i].conjugate).imaginary
+                    }
+                }
+                result[mu][nu] *= 0.25
+            }
+        }
+        for mu in 1..<4 {
+            for nu in 0..<mu {
+                result[mu][nu] = result[nu][mu]
+            }
+        }
+        return Tensor(result)
     }
 }
 
@@ -172,7 +222,7 @@ private func spinorCoef(a: Int, b: Int) -> Double {
     return sqrt((0.5 * Double(b + 1) + Double(a)) / Double(2 * a + 1))
 }
 
-private func sphericalHarmonicDerivatives(l: Int, m: Int, theta: Double, phi: Double) -> [Complex<Double>] {
+private func sphericalHarmonicDerivatives(l: Int, m: Int, theta: Double, phi: Double) -> InlineArray<3, Complex<Double>> {
     let y1 = sphericalHarmonic(l: l, m: m, theta: theta, phi: phi)
     let y2 = sphericalHarmonic(l: l, m: m + 1, theta: theta, phi: phi)
     var yDTheta = Complex(Double(m) / tan(theta)) * y1
@@ -180,7 +230,7 @@ private func sphericalHarmonicDerivatives(l: Int, m: Int, theta: Double, phi: Do
     return [y1, yDTheta, .init(0, Double(m)) * y1]
 }
 
-private func rThetaPhiDXYZ(r: Double, theta: Double, phi: Double) -> [[Double]] {
+private func rThetaPhiDXYZ(r: Double, theta: Double, phi: Double) -> InlineArray<3, InlineArray<3, Double>> {
     return [
         [sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta)],
         [cos(theta) * cos(phi) / r, cos(theta) * sin(phi) / r, -sin(theta) / r],
@@ -295,7 +345,7 @@ actor HydrogenOrbital {
     
     // --- Radial functions ---
     // The radial part is split into two functions g(ρ) and f(ρ) as in the note.
-    private func radial(rho: Double) -> (Double, Double) {
+    private func radial(rho: Double) -> InlineArray<2, Double> {
         let commonFactor = Double.pow(rho, gamma) * exp(-rho / 2)
         let firstTerm = rho * generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma + 1, x: rho)
         let lastTerm = self.gfLambda * generalizedLaguerre(n: self.nk, alpha: 2 * self.gamma - 1, x: rho)
@@ -303,10 +353,10 @@ actor HydrogenOrbital {
         let gFunc = commonFactor * (zalpha * firstTerm + gammaKappa * lastTerm)
         let fFunc = commonFactor * (zalpha * lastTerm + gammaKappa * firstTerm)
         
-        return (gFunc, fFunc)
+        return [gFunc, fFunc]
     }
     
-    private func spherical(theta: Double, phi: Double) -> (Complex<Double>, Complex<Double>, Complex<Double>, Complex<Double>) {
+    private func spherical(theta: Double, phi: Double) -> InlineArray<4, Complex<Double>> {
         // Angular parts: compute the spinor spherical harmonics.
         // The four components use indices as in the note:
         //  • Component 1: Ω(θ,ϕ)_κ^(m – ½)
@@ -317,22 +367,27 @@ actor HydrogenOrbital {
         let Y2 = Complex(sgn(kappa) * spinorCoef(a: kappa, b: mx2)) * sphericalHarmonic(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
         let Y3 = Complex(spinorCoef(a: -kappa, b: -mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
         let Y4 = Complex(sgn(kappa) * spinorCoef(a: -kappa, b: mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
-        return (Y1, Y2, Y3, Y4)
+        return [Y1, Y2, Y3, Y4]
     }
     
-    private func sphericalDerivatives(theta: Double, phi: Double) -> [[Complex<Double>]] {
-        return [
-            sphericalHarmonicDerivatives(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi).map { $0 * Complex(spinorCoef(a: kappa, b: -mx2)) },
-            sphericalHarmonicDerivatives(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi).map { $0 * Complex(-sgn(kappa) * spinorCoef(a: kappa, b: mx2))},
-            sphericalHarmonicDerivatives(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi).map { $0 * Complex(0, spinorCoef(a: -kappa, b: -mx2))},
-            sphericalHarmonicDerivatives(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi).map { $0 * Complex(0, sgn(kappa) * spinorCoef(a: -kappa, b: mx2)) },
-        ]
+    private func sphericalDerivatives(theta: Double, phi: Double) -> InlineArray<4, InlineArray<3, Complex<Double>>> {
+        var o1 = sphericalHarmonicDerivatives(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        var o2 = sphericalHarmonicDerivatives(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
+        var o3 = sphericalHarmonicDerivatives(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        var o4 = sphericalHarmonicDerivatives(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
+        for i in 0..<3 {
+            o1[i] *= Complex(spinorCoef(a: kappa, b: -mx2))
+            o2[i] *= Complex(-sgn(kappa) * spinorCoef(a: kappa, b: mx2))
+            o3[i] *= Complex(0, spinorCoef(a: -kappa, b: -mx2))
+            o4[i] *= Complex(0, sgn(kappa) * spinorCoef(a: -kappa, b: mx2))
+        }
+        return [o1, o2, o3, o4]
     }
     
     func waveFunction(t: Double, r: Double, theta: Double, phi: Double) -> Bispinor {
         // Radial parts: g(ρ) and f(ρ)
         let rho = 2 * lambda * r
-        let (g, f) = radial(rho: rho)
+        let gf = radial(rho: rho)
         
         // Time-dependent phase factor exp(–i ε t/ħ).
         let energy = Self.mechbar * Self.c * relativeEnergy
@@ -342,18 +397,18 @@ actor HydrogenOrbital {
         let commonFactor = globalPhase * Complex(normalization / r)  // (This factor includes normalization, time evolution and r^-1.)
         
         // Spherical parts: Y_κ^m
-        let (YPosUp, YPosDn, YNegUp, YNegDn) = spherical(theta: theta, phi: phi)
+        var sCoefs = spherical(theta: theta, phi: phi)
         // Assemble the four components of the Dirac spinor:
         //   Component 1: g(ρ) · Ω₁
         //   Component 2: – g(ρ) · Ω₂
         //   Component 3: i f(ρ) · Ω₃
         //   Component 4: i f(ρ) · Ω₄
-        let posUp = commonFactor * Complex(g) * YPosUp
-        let posDn = commonFactor * Complex(-g) * YPosDn
-        let negUp = commonFactor * Complex(0, f) * YNegUp
-        let negDn = commonFactor * Complex(0, f) * YNegDn
+        sCoefs[0] *= commonFactor * Complex(gf[0])
+        sCoefs[1] *= commonFactor * Complex(-gf[0])
+        sCoefs[2] *= commonFactor * Complex(0, gf[1])
+        sCoefs[3] *= commonFactor * Complex(0, gf[1])
         
-        return Bispinor(posUp, posDn, negUp, negDn)
+        return Bispinor(sCoefs)
     }
     
     func waveFunction(t: Double, x: Double, y: Double, z: Double) -> Bispinor {
@@ -365,7 +420,7 @@ actor HydrogenOrbital {
     }
     
     // For derivatives
-    private func gfTilde(rho: Double) -> [Double] {
+    private func gfTilde(rho: Double) -> InlineArray<4, Double> {
         let commonFactor = Double.pow(rho, gamma) * exp(-rho / 2)
         let l11 = generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma + 1, x: rho)
         let l12 = generalizedLaguerre(n: self.nk - 2, alpha: 2 * self.gamma + 2, x: rho)
@@ -382,78 +437,32 @@ actor HydrogenOrbital {
         ]
     }
     
-    private func sphericalCoorDerivatives(r: Double, theta: Double, phi: Double) -> [[Complex<Double>]] {
+    private func sphericalCoorDerivatives(r: Double, theta: Double, phi: Double) -> InlineArray<4, InlineArray<3, Complex<Double>>> {
         let rho = 2 * lambda * r
         let gf = gfTilde(rho: rho)
         let sphericalY = sphericalDerivatives(theta: theta, phi: phi)
-        let o0 = [Complex(2 * lambda * gf[0]) * sphericalY[0][0], Complex(gf[2]) * sphericalY[0][1], Complex(gf[2]) * sphericalY[0][2]]
-        let o1 = [Complex(2 * lambda * gf[0]) * sphericalY[1][0], Complex(gf[2]) * sphericalY[1][1], Complex(gf[2]) * sphericalY[1][2]]
-        let o2 = [Complex(2 * lambda * gf[1]) * sphericalY[2][0], Complex(gf[3]) * sphericalY[2][1], Complex(gf[3]) * sphericalY[2][2]]
-        let o3 = [Complex(2 * lambda * gf[1]) * sphericalY[3][0], Complex(gf[3]) * sphericalY[3][1], Complex(gf[3]) * sphericalY[3][2]]
+        let o0: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[0]) * sphericalY[0][0], Complex(gf[2]) * sphericalY[0][1], Complex(gf[2]) * sphericalY[0][2]]
+        let o1: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[0]) * sphericalY[1][0], Complex(gf[2]) * sphericalY[1][1], Complex(gf[2]) * sphericalY[1][2]]
+        let o2: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[1]) * sphericalY[2][0], Complex(gf[3]) * sphericalY[2][1], Complex(gf[3]) * sphericalY[2][2]]
+        let o3: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[1]) * sphericalY[3][0], Complex(gf[3]) * sphericalY[3][1], Complex(gf[3]) * sphericalY[3][2]]
         return [o0, o1, o2, o3]
     }
     
-    func waveFunctionDerivatives(t: Double, r: Double, theta: Double, phi: Double) -> InlineArray<3, Bispinor> {
+    func waveFunctionDerivatives(t: Double, r: Double, theta: Double, phi: Double) -> BispinorDerivative {
         let sphericalCoor = sphericalCoorDerivatives(r: r, theta: theta, phi: phi)
         let coorDerivatives = rThetaPhiDXYZ(r: r, theta: theta, phi: phi)
         let energy = Self.mechbar * Self.c * relativeEnergy
         let globalPhase = Complex<Double>.exp(Complex(imaginary: -energy * t))
         let commonFactor = globalPhase * Complex(normalization / r)
         
-        var matrix = Array(repeating: Array(repeating: Complex<Double>(0.0, 0.0), count: 3), count: 4)
-        for i in 0..<4 {
-            for j in 0..<3 {
-                for k in 0..<3 {
-                    matrix[i][j] += sphericalCoor[i][k] * Complex(coorDerivatives[k][j])
-                }
-                matrix[i][j] *= commonFactor
-            }
-        }
-        
-        return [
-            Bispinor(matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0]),
-            Bispinor(matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1]),
-            Bispinor(matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2]),
-        ]
+        return BispinorDerivative(energy: Self.mechbar * relativeEnergy, commonFactor: commonFactor, spherDeriv: sphericalCoor, spherCoorDeriv: coorDerivatives)
     }
     
-    func waveFunctionDerivatives(t: Double, x: Double, y: Double, z: Double) -> InlineArray<3, Bispinor> {
+    func waveFunctionDerivatives(t: Double, x: Double, y: Double, z: Double) -> BispinorDerivative {
         let rxy = Double.hypot(x, y)
         let r = Double.hypot(rxy, z)
         let theta = Double.atan2(y: rxy, x: z)
         let phi = Double.atan2(y: y, x: x)
         return waveFunctionDerivatives(t: t, r: r, theta: theta, phi: phi)
     }
-    
-    func energyTensor(waveF: Bispinor, waveFDerivatives: InlineArray<3, Bispinor>) -> Tensor {
-        let dWaveF = [
-            Complex(0, -HydrogenOrbital.mechbar * relativeEnergy) * waveF,
-            -1 * waveFDerivatives[0],
-            -1 * waveFDerivatives[1],
-            -1 * waveFDerivatives[2],
-        ]
-        var result: InlineArray<4, InlineArray<4, Double>> = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
-        for mu in 0..<4 {
-            for nu in mu..<4 {
-                for i in 0..<4 {
-                    for j in 0..<4 {
-                        for k in 0..<4 {
-                            result[mu][nu] -= (waveF.storage[i].conjugate * gammaMatrices[0][i][j] * gammaMatrices[mu][j][k] * dWaveF[nu].storage[k]).imaginary
-                            result[mu][nu] -= (waveF.storage[i].conjugate * gammaMatrices[0][i][j] * gammaMatrices[nu][j][k] * dWaveF[mu].storage[k]).imaginary
-                            result[mu][nu] += (waveF.storage[k] * gammaMatrices[0][i][j] * gammaMatrices[mu][j][k] * dWaveF[nu].storage[i].conjugate).imaginary
-                            result[mu][nu] += (waveF.storage[k] * gammaMatrices[0][i][j] * gammaMatrices[nu][j][k] * dWaveF[mu].storage[i].conjugate).imaginary
-                        }
-                    }
-                }
-                result[mu][nu] *= 0.25
-            }
-        }
-        for mu in 1..<4 {
-            for nu in 0..<mu {
-                result[mu][nu] = result[nu][mu]
-            }
-        }
-        return Tensor(result)
-    }
 }
-
