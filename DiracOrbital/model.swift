@@ -147,6 +147,7 @@ private struct IntermediateResults {
     var gfLambda: Double?
     var relativeEnergy: Double?
     var normalization: Double?
+    var spinorCoefs: InlineArray<4, Complex<Double>>?
 }
 
 private func sgn(_ x: Int) -> Double {
@@ -324,6 +325,21 @@ public actor HydrogenOrbital {
         }
     }
     
+    private var spinorCoefs: InlineArray<4, Complex<Double>> {
+        if let spinorCoefs = intermediateResults.spinorCoefs {
+            return spinorCoefs
+        } else {
+            let spinorCoefs: InlineArray<4, Complex<Double>> = [
+                Complex(spinorCoef(a: kappa, b: -mx2)),
+                Complex(-sgn(kappa) * spinorCoef(a: kappa, b: mx2)),
+                Complex(0, spinorCoef(a: -kappa, b: -mx2)),
+                Complex(0, sgn(kappa) * spinorCoef(a: -kappa, b: mx2))
+            ]
+            intermediateResults.spinorCoefs = spinorCoefs
+            return spinorCoefs
+        }
+    }
+    
     private var normalization: Double {
         if let normalization = intermediateResults.normalization {
             return normalization
@@ -357,16 +373,10 @@ public actor HydrogenOrbital {
     }
     
     private func spherical(theta: Double, phi: Double) -> InlineArray<4, Complex<Double>> {
-        // Angular parts: compute the spinor spherical harmonics.
-        // The four components use indices as in the note:
-        //  • Component 1: Ω(θ,ϕ)_κ^(m – ½)
-        //  • Component 2: Ω(θ,ϕ)_κ^(m + ½)
-        //  • Component 3: Ω(θ,ϕ)_₋κ^(m – ½)
-        //  • Component 4: Ω(θ,ϕ)_₋κ^(m + ½)
-        let Y1 = Complex(spinorCoef(a: kappa, b: -mx2)) * sphericalHarmonic(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
-        let Y2 = Complex(sgn(kappa) * spinorCoef(a: kappa, b: mx2)) * sphericalHarmonic(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
-        let Y3 = Complex(spinorCoef(a: -kappa, b: -mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
-        let Y4 = Complex(sgn(kappa) * spinorCoef(a: -kappa, b: mx2)) * sphericalHarmonic(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
+        let Y1 = spinorCoefs[0] * sphericalHarmonic(l: kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        let Y2 = spinorCoefs[1] * sphericalHarmonic(l: kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
+        let Y3 = spinorCoefs[2] * sphericalHarmonic(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
+        let Y4 = spinorCoefs[3] * sphericalHarmonic(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
         return [Y1, Y2, Y3, Y4]
     }
     
@@ -376,10 +386,10 @@ public actor HydrogenOrbital {
         var o3 = sphericalHarmonicDerivatives(l: -kappa, m: (mx2 - 1) / 2, theta: theta, phi: phi)
         var o4 = sphericalHarmonicDerivatives(l: -kappa, m: (mx2 + 1) / 2, theta: theta, phi: phi)
         for i in 0..<3 {
-            o1[i] *= Complex(spinorCoef(a: kappa, b: -mx2))
-            o2[i] *= Complex(-sgn(kappa) * spinorCoef(a: kappa, b: mx2))
-            o3[i] *= Complex(0, spinorCoef(a: -kappa, b: -mx2))
-            o4[i] *= Complex(0, sgn(kappa) * spinorCoef(a: -kappa, b: mx2))
+            o1[i] *= spinorCoefs[0]
+            o2[i] *= spinorCoefs[1]
+            o3[i] *= spinorCoefs[2]
+            o4[i] *= spinorCoefs[3]
         }
         return [o1, o2, o3, o4]
     }
@@ -399,14 +409,10 @@ public actor HydrogenOrbital {
         // Spherical parts: Y_κ^m
         var sCoefs = spherical(theta: theta, phi: phi)
         // Assemble the four components of the Dirac spinor:
-        //   Component 1: g(ρ) · Ω₁
-        //   Component 2: – g(ρ) · Ω₂
-        //   Component 3: i f(ρ) · Ω₃
-        //   Component 4: i f(ρ) · Ω₄
         sCoefs[0] *= commonFactor * Complex(gf[0])
-        sCoefs[1] *= commonFactor * Complex(-gf[0])
-        sCoefs[2] *= commonFactor * Complex(0, gf[1])
-        sCoefs[3] *= commonFactor * Complex(0, gf[1])
+        sCoefs[1] *= commonFactor * Complex(gf[0])
+        sCoefs[2] *= commonFactor * Complex(gf[1])
+        sCoefs[3] *= commonFactor * Complex(gf[1])
         
         return Bispinor(sCoefs)
     }
