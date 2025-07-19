@@ -191,7 +191,7 @@ private func associatedLegendre(l: Int, absM: Int, cosTheta: Double) -> Double {
 
 // --- Spherical Harmonic Function ---
 // Computes Y_l^m(theta, phi) = norm * P_l^m(cos(theta)) * exp(i * m * phi)
-private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double) -> Complex<Double> {
+private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double? = nil) -> Complex<Double> {
     if l < 0 {
         return sphericalHarmonic(l: -l - 1, m: m, theta: theta, phi: phi)
     }
@@ -201,9 +201,13 @@ private func sphericalHarmonic(l: Int, m: Int, theta: Double, phi: Double) -> Co
     let normFactor = sign * sqrt((Double(2 * l + 1) / (4 * Double.pi)) * factorial(l - absM) / factorial(l + absM))
 
     let legendreValue = associatedLegendre(l: l, absM: absM, cosTheta: cos(theta)) * Double.pow(sin(theta), absM)
-    let expFactor = Complex.exp(Complex(imaginary: Double(m) * phi))
     
-    return Complex<Double>(normFactor) * Complex(legendreValue, 0) * expFactor
+    var result = Complex<Double>(normFactor) * Complex(legendreValue)
+    if let phi {
+        result *= Complex.exp(Complex(imaginary: Double(m) * phi))
+    }
+    
+    return result
 }
 
 // --- Generalized Laguerre Polynomial ---
@@ -224,10 +228,11 @@ private func spinorCoef(a: Int, b: Int) -> Double {
 }
 
 private func sphericalHarmonicDerivatives(l: Int, m: Int, theta: Double, phi: Double) -> InlineArray<3, Complex<Double>> {
-    let y1 = sphericalHarmonic(l: l, m: m, theta: theta, phi: phi)
-    let y2 = sphericalHarmonic(l: l, m: m + 1, theta: theta, phi: phi)
+    let expFactor = Complex.exp(Complex(imaginary: Double(m) * phi))
+    let y1 = sphericalHarmonic(l: l, m: m, theta: theta) * expFactor
+    let y2 = sphericalHarmonic(l: l, m: m + 1, theta: theta) * expFactor
     var yDTheta = Complex(Double(m) / tan(theta)) * y1
-    yDTheta += Complex<Double>.exp(.init(0, -phi)) * Complex<Double>.sqrt(Complex<Double>((l - m) * (l + m + 1))) * y2
+    yDTheta += Complex<Double>.sqrt(Complex<Double>((l - m) * (l + m + 1))) * y2
     return [y1, yDTheta, .init(0, Double(m)) * y1]
 }
 
@@ -432,14 +437,16 @@ public actor HydrogenOrbital {
         let l12 = generalizedLaguerre(n: self.nk - 2, alpha: 2 * self.gamma + 2, x: rho)
         let l21 = generalizedLaguerre(n: self.nk, alpha: 2 * self.gamma - 1, x: rho)
         let l22 = generalizedLaguerre(n: self.nk - 1, alpha: 2 * self.gamma, x: rho)
-        let firstTerm = (self.gamma / rho - 0.5) * l11 - l12
-        let lastTerm = ((self.gamma - 1.0) / rho - 0.5) * l21 - l22
         let gammaKappa = self.gamma - Double(self.kappa)
+        let g = self.zalpha * rho * l11 + gammaKappa * self.gfLambda * l21
+        let f = gammaKappa * rho * l11 + self.zalpha * self.gfLambda * l21
+        let ghat = self.zalpha * (rho * l12 - l11) + gammaKappa * self.gfLambda * l22
+        let fhat = gammaKappa * (rho * l12 - l11) + self.zalpha * self.gfLambda * l22
         return [
-            commonFactor * (self.zalpha * rho * firstTerm + gammaKappa * self.gfLambda * lastTerm),
-            commonFactor * (gammaKappa * rho * firstTerm + self.zalpha * self.gfLambda * lastTerm),
-            commonFactor * (self.zalpha * rho * l11 + gammaKappa * self.gfLambda * l21),
-            commonFactor * (gammaKappa * rho * l11 + self.zalpha * self.gfLambda * l21),
+            2 * lambda * commonFactor * (((gamma - 1) / rho - 0.5) * g - ghat),
+            2 * lambda * commonFactor * (((gamma - 1) / rho - 0.5) * f - fhat),
+            commonFactor * g,
+            commonFactor * f,
         ]
     }
     
@@ -447,10 +454,10 @@ public actor HydrogenOrbital {
         let rho = 2 * lambda * r
         let gf = gfTilde(rho: rho)
         let sphericalY = sphericalDerivatives(theta: theta, phi: phi)
-        let o0: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[0]) * sphericalY[0][0], Complex(gf[2]) * sphericalY[0][1], Complex(gf[2]) * sphericalY[0][2]]
-        let o1: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[0]) * sphericalY[1][0], Complex(gf[2]) * sphericalY[1][1], Complex(gf[2]) * sphericalY[1][2]]
-        let o2: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[1]) * sphericalY[2][0], Complex(gf[3]) * sphericalY[2][1], Complex(gf[3]) * sphericalY[2][2]]
-        let o3: InlineArray<3, Complex<Double>> = [Complex(2 * lambda * gf[1]) * sphericalY[3][0], Complex(gf[3]) * sphericalY[3][1], Complex(gf[3]) * sphericalY[3][2]]
+        let o0: InlineArray<3, Complex<Double>> = [Complex(gf[0]) * sphericalY[0][0], Complex(gf[2]) * sphericalY[0][1], Complex(gf[2]) * sphericalY[0][2]]
+        let o1: InlineArray<3, Complex<Double>> = [Complex(gf[0]) * sphericalY[1][0], Complex(gf[2]) * sphericalY[1][1], Complex(gf[2]) * sphericalY[1][2]]
+        let o2: InlineArray<3, Complex<Double>> = [Complex(gf[1]) * sphericalY[2][0], Complex(gf[3]) * sphericalY[2][1], Complex(gf[3]) * sphericalY[2][2]]
+        let o3: InlineArray<3, Complex<Double>> = [Complex(gf[1]) * sphericalY[3][0], Complex(gf[3]) * sphericalY[3][1], Complex(gf[3]) * sphericalY[3][2]]
         return [o0, o1, o2, o3]
     }
     
